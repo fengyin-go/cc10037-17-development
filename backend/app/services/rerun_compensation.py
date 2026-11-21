@@ -136,6 +136,36 @@ class RerunCompensationService(BaseModuleService):
             "snapshot_at": datetime.now().isoformat(),
         }
 
+    def register_evidence_compensation(
+        self,
+        *,
+        pipeline_id: str,
+        execution_id: str,
+        partitions: list[str],
+        reason: str,
+    ) -> dict[str, Any]:
+        """登记证据驱动的回刷补偿任务，分区列表来自恢复入口的可核对范围。"""
+        rows = store.rows(self.MODULE)
+        new_id = max((int(r.get("id", 0)) for r in rows), default=0) + 1
+        task_name = f"证据补偿-{execution_id}-{partitions[0]}"
+        entry = {
+            "id": new_id,
+            "status": "待执行",
+            "pending": True,
+            "abnormal": False,
+            "任务名称": task_name,
+            "目标管线": pipeline_id,
+            "重跑范围": "证据分区复跑",
+            "开始分区": partitions[0],
+            "结束分区": partitions[-1],
+            "并行度": "4",
+            "补偿原因": reason or f"异常核对文件 {execution_id} 驱动的坏行补偿",
+            "证据批次": execution_id,
+            "补偿分区": ",".join(partitions),
+        }
+        rows.append(entry)
+        return dict(entry)
+
     def run_action(self, entry_id: int, action: str) -> tuple[dict[str, Any] | None, str]:
         entry, msg = super().run_action(entry_id, action)
         if entry:

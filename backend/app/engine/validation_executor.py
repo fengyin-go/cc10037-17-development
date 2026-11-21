@@ -57,6 +57,9 @@ class ValidationResult:
     threshold_exceeded: bool
     blocked: bool  # 是否触发阻断
     error_samples: list[dict[str, Any]] = field(default_factory=list)
+    # 坏行样本定位：locator_status 仅承载执行时刻的链路可达性判断，
+    # 取值 ACTIVE（可在血缘链路中定位原始行）/ STALE（定位已失效，等待证据补齐）。
+    locator_status: str = "ACTIVE"
 
 
 class ValidationEngine:
@@ -293,6 +296,35 @@ class ValidationEngine:
         return passed, failed, samples
 
     # ---- 批量执行 ----
+
+    def run_with_locators(
+        self,
+        rule: QualityRule,
+        rows: list[dict[str, Any]],
+        partition: str,
+        source_table: str = "",
+        lineage_path: list[str] | None = None,
+    ) -> ValidationResult:
+        """执行单条规则并为每个坏行样本生成可追溯的链路定位。
+
+        定位信息记录原始行键值、来源表、分区和血缘路径，供异常核对文件引用。
+        定位失效（链路不可达）由证据台账在执行后按规则统一标记，引擎只负责
+        产出执行时刻的完整定位结构。
+        """
+        result = self.run(rule, rows)
+        lineage = lineage_path or [source_table or rule.target_table, rule.target_table]
+        for seq, sample in enumerate(result.error_samples, start=1):
+            row_index = sample.get("row_index")
+            source_row = rows[row_index] if isinstance(row_index, int) and row_index < len(rows) else {}
+            sample["locator"] = {
+                "locator_id": f"{rule.rule_id}-{partition}-{seq}",
+                "source_table": source_table or rule.target_table,
+                "source_row_key": source_row,
+                "partition": partition,
+                "lineage_path": lineage,
+                "row_index": row_index,
+            }
+        return result
 
     def run_batch(
         self, rules: list[QualityRule], rows: list[dict[str, Any]]

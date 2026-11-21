@@ -104,6 +104,58 @@ class ExceptionCaptureService(BaseModuleService):
 
         return recurring
 
+    def register_evidence_exception(
+        self,
+        *,
+        pipeline_id: str,
+        partition: str,
+        package_id: str,
+        evidence_version: str,
+        execution_id: str,
+        import_id: str,
+        rule_item: dict[str, Any],
+    ) -> dict[str, Any]:
+        """按可验证的规则与分区登记一条质量门禁异常。
+
+        证据状态为「待补证」的规则同样登记，但消息中明确样本定位失效、
+        暂不可复跑；登记记录回链凭证编号与版本，恢复后复核仍可追溯。
+        """
+        rows = store.rows(self.MODULE)
+        new_id = max((int(r.get("id", 0)) for r in rows), default=0) + 1
+        pending = rule_item.get("evidence_status") == "待补证"
+        base = (
+            f"规则 {rule_item['rule_id']}（{rule_item['rule_name']}）失败："
+            f"坏行 {rule_item['failed_rows']} 行，失败率 {rule_item['failed_ratio']}，"
+            f"阈值 {rule_item['threshold']}"
+        )
+        message = (
+            base + "；样本定位失效，等待证据补齐，暂不可复跑"
+            if pending
+            else base + "；样本定位有效，可按分区重算实际坏行"
+        )
+        entry = {
+            "id": new_id,
+            "status": "未处理",
+            "pending": True,
+            "abnormal": True,
+            "发生时间": datetime.now().isoformat(timespec="seconds"),
+            "所属管线": pipeline_id,
+            "异常类型": "QualityGateViolation",
+            "异常消息": message,
+            "影响分区": partition,
+            "栈跟踪": f"凭证:{package_id}/规则:{rule_item['rule_id']}",
+            "处理状态": "未处理",
+            "证据批次": execution_id,
+            "证据凭证": package_id,
+            "凭证版本": evidence_version,
+            "规则ID": rule_item["rule_id"],
+            "证据状态": rule_item.get("evidence_status"),
+            "定位状态": rule_item.get("locator_status"),
+            "导入登记号": import_id,
+        }
+        rows.append(entry)
+        return dict(entry)
+
     def suggest_recovery(self, exception_id: int) -> dict[str, Any]:
         """为异常提供恢复建议。
 

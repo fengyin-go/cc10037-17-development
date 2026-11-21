@@ -11,11 +11,14 @@
 .
 ├── frontend/                 Vue 3 + Vite + TypeScript 前端
 │   ├── src/views/WorkbenchView.vue|tsx  全部模块共享工作台
+│   ├── src/views/EvidenceView.vue       规则证据工作台（异常核对文件交接）
 │   ├── src/data/modules.ts              18个业务模块配置
 │   ├── src/api/              统一请求封装
 │   └── vite.config.ts        dev server 配置（open: false）
 ├── backend/                  FastAPI（Python） 后端
 │   ├── app/routers/resource.py  通用查询/导出/登记/动作接口
+│   ├── app/routers/evidence.py  规则证据：执行冻结/导出下载/导入核验/补偿
+│   ├── app/engine/evidence_ledger.py  规则证据台账（凭证版本与哈希核验）
 │   ├── app/services/<key>.py    每个模块独立领域逻辑
 │   ├── app/services/base.py     共享服务骨架
 │   └── app/store.py          内存数据仓库与示例数据
@@ -76,6 +79,26 @@ npm run dev
   `frontend/src/domain/<模块>.ts`，用于承载真实业务差异并维持36题位容量。
 - 列表接口统一返回 `{ items, total, page, size }`，动作接口统一返回 `{ ok, message }`。
 - 状态流转只允许在 `app/services` 里改，路由层不做业务判断。
+
+## 规则证据（异常核对文件）
+
+质量门禁逐规则给出坏行数，但值班组交接缺少可下载的核对文件。规则证据链路把
+坏行样本定位、规则阈值与来源日期冻结成带凭证版本的异常核对文件：
+
+1. `POST /api/evidence/executions` 执行一轮门禁，冻结规则快照、逐规则结果和带
+   血缘链路的样本定位；定位状态分 `ACTIVE`（可重算实际坏行）与 `STALE`（失效，
+   等待证据补齐），失效时标明缺在哪一条规则。
+2. `POST /api/evidence/executions/{id}/export` 导出、`GET /api/evidence/packages/{id}/download`
+   下载异常核对文件（JSON，含 `content_hash` 与 `evidence_version`）。
+3. `POST /api/evidence/imports` 异常捕获接收核对文件：哈希、批次归属、跨批次引用
+   全部核验通过后，按可验证的规则与分区登记异常数据。
+4. `GET /api/evidence/executions/{id}/recovery-scope` 恢复入口只把证据可核对的
+   分区列为可复跑范围；`POST .../compensations` 提交补偿，失效分区一律拒绝。
+5. `POST /api/evidence/executions/{id}/reverify` 恢复后重新核验，沿用原批次冻结的
+   规则快照生成新执行批次并回链原凭证，新旧包各自以执行批次为准。
+
+约束：单份报告只能引用该次执行的规则与样本，不能从其他批次取原始行；
+任何篡改、重复导入、跨批次引用都会被整包拒绝。
 
 领域：数据工程
 子方向：数仓与数据湖
